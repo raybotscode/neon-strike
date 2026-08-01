@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { HUD } from './hud.js';
 import { Input } from './input.js';
 import { Game } from './game.js';
+import { loadModels } from './models.js';
 
 const style = document.createElement('style');
 style.textContent = `
@@ -36,8 +37,11 @@ renderer.shadowMap.enabled = false;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 260);
+scene.add(camera);
 const input = new Input(root, hud);
 const game = new Game(scene, camera, renderer, hud, input);
+
+loadModels().then(models => game.setModels(models));
 
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;

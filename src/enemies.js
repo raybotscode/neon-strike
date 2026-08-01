@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { fitModel, makeModel } from './models.js';
 
 const TYPES = {
   grunt: { hp: 55, speed: 2.0, radius: 0.55, damage: 9, color: 0x39e7ff, score: 100 },
@@ -8,12 +9,29 @@ const TYPES = {
   boss: { hp: 950, speed: 1.35, radius: 1.75, damage: 20, color: 0xff3030, score: 1500 }
 };
 
+const MODEL_KEYS = {
+  grunt: 'enemy_grunt',
+  shooter: 'enemy_shooter',
+  rusher: 'enemy_rusher',
+  sniper: 'enemy_sniper',
+  boss: 'enemy_boss'
+};
+
+const MODEL_HEIGHTS = {
+  grunt: 1.1,
+  shooter: 1.35,
+  rusher: 0.85,
+  sniper: 1.35,
+  boss: 3.4
+};
+
 export class Enemies {
   constructor(scene, game) {
     this.scene = scene;
     this.game = game;
     this.list = [];
     this.killQueue = [];
+    this.models = null;
     this.geos = {
       grunt: new THREE.IcosahedronGeometry(0.65, 0),
       shooter: new THREE.BoxGeometry(1, 1, 1),
@@ -27,10 +45,17 @@ export class Enemies {
     this.list.length = 0;
     this.killQueue.length = 0;
   }
+  setModels(models) {
+    this.models = models;
+    for (const e of this.list) this.replaceVisual(e);
+  }
   spawn(type, pos, levelColor) {
-    const t = TYPES[type], mat = new THREE.MeshStandardMaterial({ color: 0x101018, emissive: t.color, emissiveIntensity: 1.2, roughness: 0.4 });
-    const mesh = new THREE.Mesh(this.geos[type], mat);
-    mesh.position.copy(pos); mesh.position.y = type === 'boss' ? 2.0 : 0.75;
+    const t = TYPES[type];
+    const mesh = new THREE.Group();
+    mesh.position.copy(pos);
+    mesh.position.y = type === 'boss' ? 2.0 : 0.75;
+    const visual = this.createVisual(type, mesh.position.y);
+    mesh.add(visual);
     const eye = new THREE.Mesh(new THREE.BoxGeometry(type === 'boss' ? 1.2 : 0.42, 0.12, 0.06), new THREE.MeshBasicMaterial({ color: 0xffffff, blending: THREE.AdditiveBlending }));
     eye.position.set(0, type === 'boss' ? 0.4 : 0.18, -t.radius - 0.02);
     mesh.add(eye);
@@ -43,7 +68,60 @@ export class Enemies {
       this.scene.add(laser);
     }
     this.scene.add(mesh, glow);
-    this.list.push({ type, mesh, eye, glow, laser, hp: t.hp, maxHp: t.hp, speed: t.speed, radius: t.radius, damage: t.damage, score: t.score, attack: 0.5 + Math.random(), flash: 0, dead: false, bossPhase: 1, charge: 0 });
+    const enemy = { type, mesh, visual, eye, glow, laser, hp: t.hp, maxHp: t.hp, speed: t.speed, radius: t.radius, damage: t.damage, score: t.score, color: t.color, attack: 0.5 + Math.random(), flash: 0, dead: false, bossPhase: 1, charge: 0, flashTargets: [], baseVisualScale: visual.scale.clone() };
+    this.collectFlashTargets(enemy);
+    this.list.push(enemy);
+  }
+  createVisual(type, groundOffset) {
+    const model = makeModel(MODEL_KEYS[type]);
+    if (model) {
+      model.traverse(obj => {
+        if (!obj.isMesh || !obj.material) return;
+        obj.material = Array.isArray(obj.material) ? obj.material.map(m => m.clone()) : obj.material.clone();
+      });
+      fitModel(model, { height: MODEL_HEIGHTS[type], groundY: -groundOffset });
+      return model;
+    }
+    const mat = new THREE.MeshStandardMaterial({ color: 0x101018, emissive: TYPES[type].color, emissiveIntensity: 1.2, roughness: 0.4 });
+    return new THREE.Mesh(this.geos[type], mat);
+  }
+  replaceVisual(e) {
+    const next = this.createVisual(e.type, e.mesh.position.y);
+    if (!next || next.isMesh && e.visual?.isMesh) return;
+    e.mesh.remove(e.visual);
+    e.visual = next;
+    e.mesh.add(e.visual);
+    e.baseVisualScale = next.scale.clone();
+    this.collectFlashTargets(e);
+  }
+  collectFlashTargets(e) {
+    e.flashTargets = [];
+    e.visual.traverse(obj => {
+      if (!obj.isMesh || !obj.material) return;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      for (const mat of mats) {
+        e.flashTargets.push({
+          mat,
+          emissive: mat.emissive ? mat.emissive.clone() : null,
+          emissiveIntensity: mat.emissiveIntensity ?? 0,
+          color: mat.color ? mat.color.clone() : null
+        });
+      }
+    });
+  }
+  setFlash(e, active) {
+    let usedEmissive = false;
+    for (const target of e.flashTargets) {
+      if (target.mat.emissive) {
+        target.mat.emissive.setHex(active ? 0xffffff : (target.emissive?.getHex() ?? e.color));
+        target.mat.emissiveIntensity = active ? 2.6 : target.emissiveIntensity;
+        usedEmissive = true;
+      } else if (target.mat.color && target.color) {
+        target.mat.color.copy(active ? new THREE.Color(0xffffff) : target.color);
+      }
+    }
+    const pulse = active && !usedEmissive ? 1.06 : 1;
+    e.visual.scale.copy(e.baseVisualScale).multiplyScalar(pulse);
   }
   damage(e, amount, weapon, pos, particles, effects, audio) {
     e.hp -= amount;
@@ -52,7 +130,7 @@ export class Enemies {
     particles.emit(pos, 0xffffff, 5, 2, 0.08);
     if (e.hp <= 0 && !e.dead) {
       e.dead = true;
-      particles.emit(e.mesh.position, e.mesh.material.emissive.getHex(), e.type === 'boss' ? 90 : 28, e.type === 'boss' ? 13 : 7, e.type === 'boss' ? 0.35 : 0.18);
+      particles.emit(e.mesh.position, e.color, e.type === 'boss' ? 90 : 28, e.type === 'boss' ? 13 : 7, e.type === 'boss' ? 0.35 : 0.18);
       this.killQueue.push(e);
     }
   }
@@ -72,11 +150,9 @@ export class Enemies {
       e.attack -= dt;
       if (e.flash > 0) {
         e.flash -= dt;
-        e.mesh.material.emissive.setHex(0xffffff);
-        e.mesh.material.emissiveIntensity = 2.6;
+        this.setFlash(e, true);
       } else {
-        e.mesh.material.emissive.setHex(TYPES[e.type].color);
-        e.mesh.material.emissiveIntensity = e.type === 'boss' ? 1.8 : 1.15;
+        this.setFlash(e, false);
       }
       if (e.type === 'sniper') {
         if (e.laser) {

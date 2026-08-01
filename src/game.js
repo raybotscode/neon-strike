@@ -14,19 +14,25 @@ export class Game {
     this.audio = new AudioSystem();
     this.player = new Player(camera);
     this.level = new Level(scene);
-    this.weapons = new Weapons(scene);
+    this.weapons = new Weapons(scene, camera);
     this.enemies = new Enemies(scene, this);
     this.particles = new ParticleSystem(scene);
     this.effects = new Effects(document.body);
     this.rayLight = new THREE.HemisphereLight(0x8fdfff, 0x05060f, 1.5);
     scene.add(this.rayLight);
-    scene.fog = new THREE.FogExp2(0x05060f, 0.026);
+    scene.fog = new THREE.FogExp2(0x05060f, 0.018);
     this.levelIndex = 0; this.waveIndex = 0; this.waveLeft = {}; this.waveDelay = 0; this.spawnTick = 0;
     this.score = 0; this.kills = 0; this.totalKills = 0; this.combo = 1; this.comboTimer = 0; this.maxCombo = 1; this.levelTime = 0;
     this.mode = 'title'; this.modeText = 'READY'; this.high = Number(localStorage.getItem('neonStrikeHigh') || 0);
     this.screen = null;
     this.bindHud();
     this.showTitle();
+  }
+  setModels(models) {
+    this.models = models;
+    this.weapons.setModels(models);
+    this.enemies.setModels(models);
+    this.level.setModels(models);
   }
   bindHud() {
     this.hud.mute.textContent = this.audio.muted ? 'SOUND OFF' : 'MUTE';
